@@ -3,94 +3,104 @@ const userTab = document.querySelector("[data-userWeather]");
 const searchTab = document.querySelector("[data-SearchWeather]");
 const userContainer = document.querySelector(".weather-container");
 const grantAccessContainer = document.querySelector(".grant-location-container");
-const searchForm = document.querySelector("[data-SearchForm]"); // Form for searching weather by city name
+const searchForm = document.querySelector("[data-SearchForm]");
 const loadingScreen = document.querySelector(".loading-container");
 const userInfoContainer = document.querySelector(".user-info-container");
+const searchInput = document.querySelector("[data-searchInput]");
+const grantAccessButton = document.querySelector("[data-grantAccess]");
 
 // Initial setup
 let currentTab = userTab;
 const API_KEY = "151e9984ae65a82eb6299c31a426f9bf";
-currentTab.classList.add("current-tab"); // Highlighting the default tab
+currentTab.classList.add("current-tab");
 
 // Fetch weather information from session storage (if available)
 getFromSessionStorage();
 
 function switchTab(clickedTab) {
     if (clickedTab != currentTab) {
-        currentTab.classList.remove("current-tab"); // Remove the active class from the current tab
+        currentTab.classList.remove("current-tab");
         currentTab = clickedTab;
-        currentTab.classList.add("current-tab"); // Add the active class to the clicked tab
+        currentTab.classList.add("current-tab");
 
         if (clickedTab === searchTab) {
             // Switch to search form
             searchForm.classList.add("active");
             userInfoContainer.classList.remove("active");
             grantAccessContainer.classList.remove("active");
+            searchInput.value = "";
         } else {
             // Switch back to user's weather
             searchForm.classList.remove("active");
-            getFromSessionStorage(); // Retrieve user's weather information from session storage
+            userInfoContainer.classList.remove("active");
+            loadingScreen.classList.remove("active");
+            getFromSessionStorage();
         }
     }
 }
 
-// Event listeners for tab switching
-userTab.addEventListener("click", () => switchTab(userTab)); // Switch to user's weather
-searchTab.addEventListener("click", () => switchTab(searchTab)); // Switch to search weather
+// Event listeners
+userTab.addEventListener("click", () => switchTab(userTab));
+searchTab.addEventListener("click", () => switchTab(searchTab));
 
-// Function to get user's coordinates from session storage
 function getFromSessionStorage() {
     const localCoordinates = sessionStorage.getItem("user-coordinates");
     if (!localCoordinates) {
-        // If no coordinates are stored, prompt user to grant location access
         grantAccessContainer.classList.add("active");
+        userInfoContainer.classList.remove("active");
     } else {
-        const coordinates = JSON.parse(localCoordinates); // Parse stored coordinates
-        fetchUserWeatherInfo(coordinates); // Fetch weather information for stored coordinates
+        const coordinates = JSON.parse(localCoordinates);
+        fetchUserWeatherInfo(coordinates);
     }
 }
 
-// Function to fetch weather information using coordinates
 async function fetchUserWeatherInfo(coordinates) {
     const { lat, lon } = coordinates;
-       
-    // Show the loading screen while fetching data
+
     grantAccessContainer.classList.remove("active");
     loadingScreen.classList.add("active");
-   
+
     try {
-        // Fetch weather data from OpenWeatherMap API
-        const response = await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${API_KEY}&units=metric`);
-        const data = await response.json();
+        // First get location details (reverse geocoding)
+        const geoResponse = await fetch(
+            `https://api.openweathermap.org/geo/1.0/reverse?lat=${lat}&lon=${lon}&limit=1&appid=${API_KEY}`
+        );
 
-        // Fetch the accurate city name using reverse geocoding
-        const accurateCityName = await fetchCityName(lat, lon);
-        data.name = accurateCityName; // Override the city name with the accurate one
+        const geoData = await geoResponse.json();
 
-        // Hide the loading screen and show the user info container
+        if (!geoData || geoData.length === 0) {
+            throw new Error("Location not found");
+        }
+
+        // Then get weather data
+        const weatherResponse = await fetch(
+            `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${API_KEY}&units=metric`
+        );
+
+        const weatherData = await weatherResponse.json();
+
+        // Merge location data with weather data
+        weatherData.name = geoData[0]?.name || weatherData.name || "Current Location";
+        weatherData.sys = weatherData.sys || {};
+        weatherData.sys.country = geoData[0]?.country || weatherData.sys.country || "";
+
         loadingScreen.classList.remove("active");
         userInfoContainer.classList.add("active");
-        renderWeatherInfo(data); // Render the weather information on the screen
+        renderWeatherInfo(weatherData);
     } catch (err) {
-        loadingScreen.classList.remove("active"); // Hide the loading screen in case of an error
-        console.error("Error fetching user weather info:", err);
+        console.error("Error fetching weather:", err);
+        loadingScreen.classList.remove("active");
+        alert("Failed to fetch weather data. Please try again.");
     }
 }
 
-// Function to fetch the city name using reverse geocoding
-async function fetchCityName(lat, lon) {
-    try {
-        const response = await fetch(`https://api.openweathermap.org/geo/1.0/reverse?lat=${lat}&lon=${lon}&limit=1&appid=${API_KEY}`);
-        const data = await response.json();
-        return data[0]?.name || "Unknown location"; // Return the city name or fallback to "Unknown location"
-    } catch (err) {
-        console.log("Error fetching city name: ", err);
-        return "Unknown location"; // Fallback if something goes wrong
-    }
-}
-
-// Function to render the weather information on the screen
 function renderWeatherInfo(weatherInfo) {
+    // Validate weather data
+    if (!weatherInfo || !weatherInfo.weather || !weatherInfo.weather[0]) {
+        console.error("Invalid weather data:", weatherInfo);
+        return;
+    }
+
     const cityName = document.querySelector("[data-cityName]");
     const countryIcon = document.querySelector("[data-countryIcon]");
     const desc = document.querySelector("[data-weatherDesc]");
@@ -100,219 +110,134 @@ function renderWeatherInfo(weatherInfo) {
     const humidity = document.querySelector("[data-humidity]");
     const cloudiness = document.querySelector("[data-cloudiness]");
 
-    // Display the accurate city name
-    cityName.innerText = weatherInfo?.name;
-    const countryCode = weatherInfo.sys.country.toLowerCase();
-    countryIcon.src = `https://flagcdn.com/144x108/${countryCode}.png`;
-    weatherIcon.src = `https://openweathermap.org/img/wn/${weatherInfo.weather[0].icon}@2x.png`;
-    desc.innerText = weatherInfo.weather[0].description;
-    temp.innerText = `${weatherInfo.main.temp} °C`;
-    windspeed.innerText = `${weatherInfo.wind.speed} m/s`;
-    humidity.innerText = `${weatherInfo.main.humidity}%`;
-    cloudiness.innerText = `${weatherInfo.clouds.all}%`;
+    // Set weather data
+    cityName.innerText = weatherInfo.name || "Unknown Location";
+    desc.innerText = weatherInfo.weather[0].description || "Weather data not available";
+    temp.innerText = weatherInfo.main?.temp ? `${Math.round(weatherInfo.main.temp)} °C` : "N/A";
+    windspeed.innerText = weatherInfo.wind?.speed ? `${weatherInfo.wind.speed} m/s` : "N/A";
+    humidity.innerText = weatherInfo.main?.humidity ? `${weatherInfo.main.humidity}%` : "N/A";
+    cloudiness.innerText = weatherInfo.clouds?.all ? `${weatherInfo.clouds.all}%` : "N/A";
+
+
+    if (weatherInfo.weather[0].icon) {
+        weatherIcon.src = `https://openweathermap.org/img/wn/${weatherInfo.weather[0].icon}@2x.png`;
+        weatherIcon.style.display = "block";
+    } else {
+        weatherIcon.style.display = "none";
+    }
+
+
+    if (weatherInfo.sys?.country) {
+        const countryCode = weatherInfo.sys.country.toLowerCase();
+
+        countryIcon.src = `https://flagcdn.com/w80/${countryCode}.png`;
+
+
+        countryIcon.onerror = () => {
+
+            countryIcon.src = `https://flagcdn.com/w40/${countryCode}.svg`;
+            countryIcon.onerror = () => {
+
+                countryIcon.src = "images/location.png";
+            };
+        };
+        countryIcon.style.display = "block";
+        countryIcon.alt = `${weatherInfo.sys.country} flag`;
+    } else {
+        countryIcon.style.display = "none";
+    }
 }
 
-// Function to get the user's current location using the browser's geolocation API
 function getLocation() {
     if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(showPosition);
+        navigator.geolocation.getCurrentPosition(
+            showPosition,
+            (error) => {
+                console.error("Geolocation error:", error);
+                alert("Unable to retrieve your location. Please enable location services.");
+            },
+            { timeout: 10000 }
+        );
     } else {
         alert("Geolocation is not supported by this browser.");
     }
 }
 
-// Function to handle the user's position and fetch weather data
 function showPosition(position) {
     const userCoordinates = {
         lat: position.coords.latitude,
         lon: position.coords.longitude,
     };
-
-    // Store user's coordinates in session storage and fetch weather information
     sessionStorage.setItem("user-coordinates", JSON.stringify(userCoordinates));
     fetchUserWeatherInfo(userCoordinates);
 }
 
+// Grant access button
+grantAccessButton.addEventListener("click", getLocation);
 
+// Search form
+searchForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const cityName = searchInput.value.trim();
 
+    if (!cityName) return;
 
-
-// Event listener for the "Grant Access" button
-const grantAccessButton = document.querySelector("[data-grantAccess]");
-grantAccessButton.addEventListener("click", getLocation); // Fetch user's location when button is clicked
-
-// Event listener for the search form submission
-const searchInput = document.querySelector("[data-searchInput]");
-searchForm.addEventListener("submit", (e) => {
-    e.preventDefault(); // Prevent the default form submission behavior
-    let cityName = searchInput.value; // Get the city name input by the user
-
-    if (cityName === "") 
-        return; // Do nothing if the input is empty
-
-    // Fetch weather information for the input city
-    fetchUserWeatherInfoByCity(cityName);
-});
-
-
-
-// Function to fetch weather information for a specific city
-async function fetchUserWeatherInfoByCity(city) {
-    // Show the loading screen while fetching data
     loadingScreen.classList.add("active");
-    userInfoContainer.classList.remove("active"); 
+    userInfoContainer.classList.remove("active");
     grantAccessContainer.classList.remove("active");
 
     try {
-        // Fetch weather data from OpenWeatherMap API using the city name
-        const response = await fetch(`https://api.openweathermap.org/data/2.5/weather?q=${city}&appid=${API_KEY}&units=metric`);
-        const data = await response.json();
+        // First get coordinates for the city
+        const geoResponse = await fetch(
+            `https://api.openweathermap.org/geo/1.0/direct?q=${cityName}&limit=1&appid=${API_KEY}`
+        );
 
-        // Hide the loading screen and show the user info container
+        const geoData = await geoResponse.json();
+
+        if (!geoData || geoData.length === 0) {
+            throw new Error("City not found");
+        }
+
+        // Then get weather using coordinates
+        const weatherResponse = await fetch(
+            `https://api.openweathermap.org/data/2.5/weather?lat=${geoData[0].lat}&lon=${geoData[0].lon}&appid=${API_KEY}&units=metric`
+        );
+
+        const weatherData = await weatherResponse.json();
+        weatherData.name = geoData[0].name || cityName;
+        weatherData.sys = weatherData.sys || {};
+        weatherData.sys.country = geoData[0]?.country || "";
+
         loadingScreen.classList.remove("active");
         userInfoContainer.classList.add("active");
-        renderWeatherInfo(data); // Render the weather information on the screen
+        renderWeatherInfo(weatherData);
     } catch (err) {
-        console.error("Error fetching weather info by city:", err); // Log any errors
-        loadingScreen.classList.remove("active"); // Hide the loading screen in case of an error
+        console.error("Search error:", err);
+        loadingScreen.classList.remove("active");
+        alert("Could not find weather for that city. Please check the name and try again.");
     }
-}
+});
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// Function to get area based on Pincode
-async function getAreaByPincode(pincode) {
-    const url = `https://www.postpincode.in/api/getCityName.php?pincode=${pincode}`;
-
-    try {
-        const response = await fetch(url);
-        const result = await response.json();
-
-        if (result && result.Status === "Success" && result.PostOffice && result.PostOffice.length > 0) {
-            return result.PostOffice[0];
-        } else {
-            console.error("Error: Invalid response or no data found for the given postal code.");
-            return null;
-        }
-    } catch (err) {
-        console.error("Error fetching data:", err);
-        return null;
-    }
-}
-
-
-
-
-// Function to handle the pincode lookup
-async function lookupPincode() {
-    const pincode = document.getElementById('pincodeInput').value.trim();
-    const resultContainer = document.getElementById('result');
-
-    if (pincode === "") {
-        resultContainer.innerHTML = "<p>Please enter a pincode.</p>";
-        return;
-    }
-
-    const data = await getAreaByPincode(pincode);
-
-    if (data) {
-        resultContainer.innerHTML = `
-            <h3>Details for Pincode ${pincode}</h3>
-            <p><strong>Post Office Address:</strong> ${data.PostOfficeAddress || "N/A"}</p>
-            <p><strong>District:</strong> ${data.District || "N/A"}</p>
-            <p><strong>State:</strong> ${data.State || "N/A"}</p>
-        `;
-    } else {
-        resultContainer.innerHTML = "<p>No details found for the given pincode.</p>";
-    }
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-setInterval(() => {
-    let date = new Date();
-    let timeOptions = {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit"
+// Digital Clock
+function updateClock() {
+    const date = new Date();
+    const options = {
+        weekday: 'long',
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric'
     };
 
-    
+    document.getElementById("date").textContent = date.toLocaleDateString('en-US', options);
 
-    let year = date.getFullYear();
-    let month = date.toLocaleDateString("en-us", { month: "short" });
-    let day = date.getDate();
-    let weekday = date.toLocaleDateString("en-us", { weekday: "long" });
-    document.getElementById("date").innerHTML = weekday + "- " + month + " " + day + "- " + year;
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
 
+    document.getElementById("hour").textContent = hours;
+    document.getElementById("minute").textContent = minutes;
+    document.getElementById("second").textContent = seconds;
+}
 
-    let timeString = date.toLocaleTimeString("en-us", timeOptions).split(":");
-    let hour = timeString[0];
-    let minute = timeString[1];
-    let second = timeString[2].split(" ")[0]; 
-
-    document.getElementById("hour").innerHTML = hour;
-    document.getElementById("minute").innerHTML = minute;
-    document.getElementById("second").innerHTML = second;
-
-    
-   
-    
-
-}, 1000);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+setInterval(updateClock, 1000);
+updateClock(); // Initial call
